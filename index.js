@@ -186,6 +186,10 @@ app.get('/product', async (req, res) => {
   }
 });
 
+// GEÇİCİ: refresh_token'ı görmek için (işimiz bitince sileceğiz)
+app.get('/debug-token', (req, res) => {
+  res.json({ refresh_token: tokens?.refresh_token || 'yok' });
+});
 app.listen(PORT, () => {
   console.log(`Sunucu ayakta: http://localhost:${PORT}`);
 });
