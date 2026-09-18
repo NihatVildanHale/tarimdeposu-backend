@@ -195,3 +195,7 @@ app.get('/product', async (req, res) => {
     res.status(500).json({ error: 'Hata: ' + e.message });
   }
 });
+
+app.listen(PORT, () => {
+  console.log(`Sunucu ayakta: http://localhost:${PORT}`);
+});
