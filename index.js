@@ -18,6 +18,16 @@ function loadTokens() {
     const raw = fs.readFileSync(TOKENS_FILE, 'utf-8');
     return JSON.parse(raw);
   } catch {
+    // Dosya yoksa (örn. Render yeniden başladıysa), ortam değişkenindeki
+    // refresh_token'ı başlangıç noktası olarak kullan
+    if (process.env.IDEA_REFRESH_TOKEN) {
+      console.log('Dosyada token yok, IDEA_REFRESH_TOKEN kullanılacak.');
+      return {
+        refresh_token: process.env.IDEA_REFRESH_TOKEN,
+        access_token: null,
+        expiresAt: 0, // hemen yenilenmeye zorla
+      };
+    }
     return null;
   }
 }
@@ -184,12 +194,4 @@ app.get('/product', async (req, res) => {
     console.error(e);
     res.status(500).json({ error: 'Hata: ' + e.message });
   }
-});
-
-// GEÇİCİ: refresh_token'ı görmek için (işimiz bitince sileceğiz)
-app.get('/debug-token', (req, res) => {
-  res.json({ refresh_token: tokens?.refresh_token || 'yok' });
-});
-app.listen(PORT, () => {
-  console.log(`Sunucu ayakta: http://localhost:${PORT}`);
 });
