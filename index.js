@@ -198,6 +198,10 @@ app.get('/product', async (req, res) => {
   }
 });
 
+app.get('/debug-token', (req, res) => {
+  res.json({ refresh_token: tokens?.refresh_token || 'yok' });
+});
+
 app.listen(PORT, () => {
   console.log(`Sunucu ayakta: http://localhost:${PORT}`);
 });
