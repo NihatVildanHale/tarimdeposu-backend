@@ -38,6 +38,41 @@ function saveTokens(t) {
   fs.writeFileSync(TOKENS_FILE, JSON.stringify(t, null, 2));
 }
 
+// Yeni refresh_token'ı Render'ın environment variable'ına da yazar,
+// böylece sunucu "uyuyup" dosya silinse bile en güncel token kalıcı olur
+async function syncRefreshTokenToRender(refreshToken) {
+  const apiKey = process.env.RENDER_API_KEY;
+  const serviceId = process.env.RENDER_SERVICE_ID;
+
+  if (!apiKey || !serviceId) {
+    console.log('RENDER_API_KEY veya RENDER_SERVICE_ID tanımlı değil, senkronizasyon atlanıyor.');
+    return;
+  }
+
+  try {
+    const res = await fetch(
+      `https://api.render.com/v1/services/${serviceId}/env-vars/IDEA_REFRESH_TOKEN`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ value: refreshToken }),
+      }
+    );
+
+    if (res.ok) {
+      console.log('Render environment variable güncellendi.');
+    } else {
+      const errText = await res.text();
+      console.error('Render env var güncelleme başarısız:', errText);
+    }
+  } catch (e) {
+    console.error('Render env var güncelleme hatası:', e.message);
+  }
+}
+
 let tokens = loadTokens();
 if (tokens) {
   console.log('Kayıtlı token bulundu, yükleniyor.');
@@ -88,6 +123,7 @@ app.get('/oauth/callback', async (req, res) => {
     tokens = data;
     tokens.expiresAt = Date.now() + (data.expires_in - 300) * 1000;
     saveTokens(tokens);
+    await syncRefreshTokenToRender(tokens.refresh_token);
 
     console.log('Token alındı ve kaydedildi.');
     res.send('Yetkilendirme başarılı! Bu sekmeyi kapatabilirsin, terminale dön.');
@@ -128,6 +164,7 @@ async function getValidAccessToken() {
   tokens = data;
   tokens.expiresAt = Date.now() + (data.expires_in - 300) * 1000;
   saveTokens(tokens);
+  await syncRefreshTokenToRender(tokens.refresh_token);
   console.log('Token yenilendi ve kaydedildi.');
 
   return tokens.access_token;
