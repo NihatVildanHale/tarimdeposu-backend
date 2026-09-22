@@ -13,69 +13,105 @@ const {
   IDEA_CLIENT_SECRET,
   IDEA_REDIRECT_URI,
   SHOP_URL,
+  GITHUB_TOKEN,
+  GIST_ID,
 } = process.env;
 
-function loadTokens() {
+// Gist'ten en güncel token'ı okur
+async function loadTokensFromGist() {
+  if (!GITHUB_TOKEN || !GIST_ID) return null;
+
   try {
-    const raw = fs.readFileSync(TOKENS_FILE, 'utf-8');
-    return JSON.parse(raw);
-  } catch {
-    // Dosya yoksa (örn. Render yeniden başladıysa), ortam değişkenindeki
-    // refresh_token'ı başlangıç noktası olarak kullan
-    if (process.env.IDEA_REFRESH_TOKEN) {
-      console.log('Dosyada token yok, IDEA_REFRESH_TOKEN kullanılacak.');
-      return {
-        refresh_token: process.env.IDEA_REFRESH_TOKEN,
-        access_token: null,
-        expiresAt: 0, // hemen yenilenmeye zorla
-      };
+    const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      headers: {
+        'Authorization': `Bearer ${GITHUB_TOKEN}`,
+        'Accept': 'application/vnd.github+json',
+      },
+    });
+
+    if (!res.ok) {
+      console.error('Gist okunamadı:', res.status);
+      return null;
     }
+
+    const gist = await res.json();
+    const content = gist.files['tokens.json']?.content;
+    if (!content) return null;
+
+    const parsed = JSON.parse(content);
+    if (!parsed.refresh_token) return null;
+
+    console.log('Gist üzerinden token bulundu, yükleniyor.');
+    return parsed;
+  } catch (e) {
+    console.error('Gist okuma hatası:', e.message);
     return null;
   }
 }
 
-function saveTokens(t) {
+// Güncel token'ı Gist'e yazar (Render'ı hiç tetiklemez, yeniden başlatma yapmaz)
+async function saveTokensToGist(t) {
+  if (!GITHUB_TOKEN || !GIST_ID) return;
+
+  try {
+    const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${GITHUB_TOKEN}`,
+        'Accept': 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        files: {
+          'tokens.json': {
+            content: JSON.stringify(t, null, 2),
+          },
+        },
+      }),
+    });
+
+    if (res.ok) {
+      console.log('Gist güncellendi.');
+    } else {
+      console.error('Gist güncelleme başarısız:', res.status);
+    }
+  } catch (e) {
+    console.error('Gist güncelleme hatası:', e.message);
+  }
+}
+
+function loadTokensLocal() {
+  try {
+    const raw = fs.readFileSync(TOKENS_FILE, 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function saveTokensLocal(t) {
   fs.writeFileSync(TOKENS_FILE, JSON.stringify(t, null, 2));
 }
 
-// Yeni refresh_token'ı Render'ın environment variable'ına da yazar,
-// böylece sunucu "uyuyup" dosya silinse bile en güncel token kalıcı olur
-async function syncRefreshTokenToRender(refreshToken) {
-  const apiKey = process.env.RENDER_API_KEY;
-  const serviceId = process.env.RENDER_SERVICE_ID;
+let tokens = null;
 
-  if (!apiKey || !serviceId) {
-    console.log('RENDER_API_KEY veya RENDER_SERVICE_ID tanımlı değil, senkronizasyon atlanıyor.');
-    return;
+// Açılışta önce Gist'e bak, yoksa yerel dosyaya, o da yoksa env variable'a
+async function initTokens() {
+  tokens = await loadTokensFromGist();
+
+  if (!tokens) {
+    tokens = loadTokensLocal();
+    if (tokens) console.log('Yerel dosyadan token bulundu, yükleniyor.');
   }
 
-  try {
-    const res = await fetch(
-      `https://api.render.com/v1/services/${serviceId}/env-vars/IDEA_REFRESH_TOKEN`,
-      {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ value: refreshToken }),
-      }
-    );
-
-    if (res.ok) {
-      console.log('Render environment variable güncellendi.');
-    } else {
-      const errText = await res.text();
-      console.error('Render env var güncelleme başarısız:', errText);
-    }
-  } catch (e) {
-    console.error('Render env var güncelleme hatası:', e.message);
+  if (!tokens && process.env.IDEA_REFRESH_TOKEN) {
+    console.log('Hiçbir yerde token yok, IDEA_REFRESH_TOKEN kullanılacak.');
+    tokens = {
+      refresh_token: process.env.IDEA_REFRESH_TOKEN,
+      access_token: null,
+      expiresAt: 0,
+    };
   }
-}
-
-let tokens = loadTokens();
-if (tokens) {
-  console.log('Kayıtlı token bulundu, yükleniyor.');
 }
 
 app.get('/oauth/start', (req, res) => {
@@ -122,8 +158,8 @@ app.get('/oauth/callback', async (req, res) => {
 
     tokens = data;
     tokens.expiresAt = Date.now() + (data.expires_in - 300) * 1000;
-    saveTokens(tokens);
-    await syncRefreshTokenToRender(tokens.refresh_token);
+    saveTokensLocal(tokens);
+    await saveTokensToGist(tokens);
 
     console.log('Token alındı ve kaydedildi.');
     res.send('Yetkilendirme başarılı! Bu sekmeyi kapatabilirsin, terminale dön.');
@@ -163,8 +199,8 @@ async function getValidAccessToken() {
 
   tokens = data;
   tokens.expiresAt = Date.now() + (data.expires_in - 300) * 1000;
-  saveTokens(tokens);
-  await syncRefreshTokenToRender(tokens.refresh_token);
+  saveTokensLocal(tokens);
+  await saveTokensToGist(tokens);
   console.log('Token yenilendi ve kaydedildi.');
 
   return tokens.access_token;
@@ -186,13 +222,11 @@ app.get('/product', async (req, res) => {
   }
 
   try {
-    // 1. Önce stok kodu (sku) ile dene
     let list = await fetch(
       `${SHOP_URL}/api/products?sku=${encodeURIComponent(code)}`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     ).then(r => r.json());
 
-    // 2. Bulunamazsa genel arama (q) ile dene — barkod numaraları burada yakalanabilir
     if (!Array.isArray(list) || list.length === 0) {
       list = await fetch(
         `${SHOP_URL}/api/products?q=${encodeURIComponent(code)}`,
@@ -235,6 +269,8 @@ app.get('/product', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Sunucu ayakta: http://localhost:${PORT}`);
+initTokens().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Sunucu ayakta: http://localhost:${PORT}`);
+  });
 });
