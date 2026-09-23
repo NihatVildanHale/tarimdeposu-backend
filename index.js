@@ -268,6 +268,50 @@ app.get('/product', async (req, res) => {
     res.status(500).json({ error: 'Hata: ' + e.message });
   }
 });
+app.get('/search', async (req, res) => {
+  const { q } = req.query;
+  if (!q || q.trim().length < 2) {
+    return res.status(400).json({ error: 'En az 2 karakterlik bir arama terimi girin' });
+  }
+
+  const accessToken = await getValidAccessToken();
+  if (!accessToken) {
+    return res.status(401).json({ error: 'Yetkilendirme gerekli, /oauth/start adresine git' });
+  }
+
+  try {
+    const list = await fetch(
+      `${SHOP_URL}/api/products?q=${encodeURIComponent(q.trim())}&limit=20`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    ).then(r => r.json());
+
+    if (!Array.isArray(list) || list.length === 0) {
+      return res.json([]);
+    }
+
+    const results = list.map(p => {
+      const img = p.images?.[0];
+      const imageUrl = img
+        ? `https://www.tarimdeposu.com/idea/pe/08/myassets/products/${img.directoryName}/${img.filename}.${img.extension}?revision=${img.revision}`
+        : null;
+
+      return {
+        name: p.fullName || p.name,
+        sku: p.sku,
+        price: p.price1,
+        currency: p.currency?.label || 'TL',
+        stock: p.stockAmount,
+        image: imageUrl,
+        brand: p.brand?.name || null,
+      };
+    });
+
+    res.json(results);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Hata: ' + e.message });
+  }
+});
 
 initTokens().then(() => {
   app.listen(PORT, () => {
